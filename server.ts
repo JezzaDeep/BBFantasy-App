@@ -25,10 +25,17 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    // Serve static assets from Vite's public/ folder (e.g. /FBBcover.png, /sounds/*)
+    const publicPath = path.join(process.cwd(), "public");
+    app.use(express.static(publicPath));
+
+    // Serve the built SPA from dist/
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+
+    // SPA fallback
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

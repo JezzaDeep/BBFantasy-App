@@ -547,7 +547,7 @@ function IntroScreen({ onBegin, onLoad, hasSave, playSound }: { onBegin: () => v
         className="absolute inset-0 z-0"
       >
         <img
-          src="/images/FBBcover.png"
+          src="https://i.postimg.cc/qqtpyHLV/FBBcover.png"
           alt="Fantasy Background"
           className="w-full h-full object-cover opacity-40"
           referrerPolicy="no-referrer"

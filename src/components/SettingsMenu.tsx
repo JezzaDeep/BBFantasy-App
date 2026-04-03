@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  Volume2, VolumeX, Gift, HelpCircle, Mail, X, Bell, Save
+  Volume2, VolumeX, Gift, HelpCircle, Mail, X, Bell, Save, Facebook, Instagram
 } from "lucide-react";
 import { LANGUAGES, type LanguageCode } from "../i18n";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 
 // Props for settings menu
 interface SettingsMenuProps {
@@ -48,28 +50,48 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [redeemMessage, setRedeemMessage] = useState<string | null>(null);
   const [showRewardAnimation, setShowRewardAnimation] = useState(false);
   const [rewardReceived, setRewardReceived] = useState<any>(null);
+  const [isRedeeming, setIsRedeeming] = useState(false);
 
-  const handleRedeemSubmit = () => {
-    // 🎯 PHASE 1: Local placeholder codes (replace with backend later)
-    const validCodes: Record<string, any> = {
-      'INK50': { ink: 50 },
-      'FATE10': { fatePoints: 10 },
-      'BOOK1': { books: ['The Indie Tome'] },
-      'MERCH1': { merch: ['Mystic Bookmark'] },
-    };
-
-    const reward = validCodes[redeemCode.toUpperCase()];
-
-    if (reward) {
-      setRewardReceived(reward);
-      setShowRewardAnimation(true);
-      onRedeemReward(reward);
-      setRedeemMessage(`✨ A magical gift appears!`);
-    } else {
-      setRedeemMessage('❌ The code is invalid or has vanished!');
+  const handleRedeemSubmit = async () => {
+    if (!auth.currentUser) {
+      setRedeemMessage('❌ Please sign in to redeem codes.');
+      return;
     }
 
-    setRedeemCode('');
+    setIsRedeeming(true);
+    setRedeemMessage('Checking code...');
+
+    try {
+      const codeRef = doc(db, 'redeemCodes', redeemCode.toUpperCase());
+      const codeSnap = await getDoc(codeRef);
+
+      if (codeSnap.exists()) {
+        const codeData = codeSnap.data();
+        if (codeData.redeemed) {
+          setRedeemMessage('❌ This code has already been redeemed.');
+        } else {
+          // Redeem the code
+          await updateDoc(codeRef, {
+            redeemed: true,
+            redeemedBy: auth.currentUser.uid
+          });
+
+          const reward = JSON.parse(codeData.reward);
+          setRewardReceived(reward);
+          setShowRewardAnimation(true);
+          onRedeemReward(reward);
+          setRedeemMessage(`✨ A magical gift appears!`);
+        }
+      } else {
+        setRedeemMessage('❌ The code is invalid or has vanished!');
+      }
+    } catch (error) {
+      console.error('Error redeeming code:', error);
+      setRedeemMessage('❌ An error occurred. Please try again.');
+    } finally {
+      setIsRedeeming(false);
+      setRedeemCode('');
+    }
   };
 
   return (
@@ -197,13 +219,14 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
                   value={redeemCode}
                   onChange={(e) => setRedeemCode(e.target.value)}
                   placeholder="Enter your code..."
-                  className="flex-1 px-3 py-2 rounded-xl bg-white/10 text-white placeholder:text-white/40"
+                  className="flex-1 px-3 py-2 rounded-xl bg-white border border-ink/20 text-black placeholder:text-ink/40"
                 />
                 <button
                   onClick={handleRedeemSubmit}
-                  className="px-4 py-2 rounded-xl bg-gold font-bold hover:shadow-lg transition text-ink"
+                  disabled={isRedeeming}
+                  className="px-4 py-2 rounded-xl bg-gold font-bold hover:shadow-lg transition text-ink disabled:opacity-50"
                 >
-                  Cast
+                  {isRedeeming ? 'Casting...' : 'Cast'}
                 </button>
               </div>
               {redeemMessage && <p className="text-sm text-ink/80 mt-2">{redeemMessage}</p>}
@@ -263,6 +286,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
             </a>
             <a href="mailto:moonspinepress@gmail.com" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
               <Mail size={18} className="text-gold" /> {tx('settings_contact')}
+            </a>
+            <a href="https://www.facebook.com/authorjezzadeep" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
+              <Facebook size={18} className="text-gold" /> Facebook
+            </a>
+            <a href="https://www.instagram.com/jezzadeep.author" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
+              <Instagram size={18} className="text-gold" /> Instagram
             </a>
           </div>
 

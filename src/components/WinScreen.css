@@ -1,7 +1,7 @@
 .win-screen-overlay {
-  min-height: 100vh;
-  width: 100%;
-  position: relative;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
   overflow-y: auto;
   padding: 2rem;
   background:

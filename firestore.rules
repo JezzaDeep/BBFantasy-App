@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    match /redeemCodes/{codeId} {
+      // Allow read access to check if code exists and is not redeemed
+      allow read: if isAuthenticated();
+      
+      // Allow update only if code is not redeemed and user is setting it to redeemed
+      allow update: if isAuthenticated() && 
+                    resource.data.redeemed == false && 
+                    request.resource.data.redeemed == true &&
+                    request.resource.data.redeemedBy == request.auth.uid;
+    }
+  }
+}

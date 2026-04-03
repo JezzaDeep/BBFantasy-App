@@ -184,6 +184,7 @@ type Player = {
   resources: PlayerResources;
   status: PlayerStatus;
   isOnline: boolean;
+  isAI?: boolean;
   warriorBonusUsed?: boolean;
   stats: {
     arcaneSpacesVisited: number;
@@ -1139,6 +1140,7 @@ export default function App() {
         corruption: 0,
       },
       isOnline: true,
+      isAI: p.isAI || false,
       stats: {
         arcaneSpacesVisited: 0,
         fateCardsDrawn: 0,
@@ -1872,6 +1874,58 @@ export default function App() {
       return () => clearTimeout(timer);
     }
   }, [turnPhase]);
+
+  // AI Turn Automation
+  useEffect(() => {
+    if (appState !== 'playing' || !currentPlayer || !currentPlayer.isAI) return;
+
+    const delay = 1500;
+
+    const timer = setTimeout(() => {
+      switch (turnPhase) {
+        case 'ready':
+          handleRoll();
+          break;
+        case 'resolving_space':
+          if (!activeSpace) break;
+          if (activeSpace.type === 'property' || activeSpace.type === 'pillar') {
+            const canAfford = 
+              (activeSpace.cost?.ink || 0) <= (currentPlayer.resources.ink || 0) &&
+              (activeSpace.cost?.arcane || 0) <= (currentPlayer.resources.arcane || 0) &&
+              (activeSpace.cost?.fate || 0) <= (currentPlayer.resources.fate || 0);
+            
+            if (canAfford) {
+              completePrompt(activeSpace.id);
+            } else {
+              setActiveSpace(null);
+              setTurnPhase('turn_complete');
+              const spaceName = SPACE_TX[currentLanguage]?.[activeSpace.id]?.name || activeSpace.name;
+              addLog(`${currentPlayer.name} left ${spaceName} unresolved.`);
+            }
+          } else if (activeSpace.type === 'fate' || activeSpace.type === 'arcane') {
+            handleContinueSpace();
+          } else {
+            applySimpleSpaceEffect();
+          }
+          break;
+        case 'resolving_card':
+          applyCardEffect();
+          break;
+        case 'seer_choosing':
+          if (seerCards.length > 0) {
+            const card = seerCards[0];
+            const cardTitle = CARD_TX[currentLanguage]?.[card.id]?.title || card.title;
+            setActiveCard({ card, type: 'fate' });
+            setTurnPhase('resolving_card');
+            setSeerCards([]);
+            addLog(`${currentPlayer.name} chose the fate: ${cardTitle}.`);
+          }
+          break;
+      }
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [turnPhase, currentPlayerIndex, appState, activeSpace, activeCard, seerCards]);
 
   const handleRedeemReward = (reward: any) => {
     if (!currentPlayer) return;
@@ -2897,6 +2951,7 @@ export default function App() {
             device="desktop" // You might want to pass the actual device state here if available in App.tsx, or let WinScreen use its hook
             audioEnabled={sfxEnabled}
             audioVolume={sfxVolume}
+            victorySoundUrl={customSoundUrls.milestone}
             onPlayAgain={() => window.location.reload()}
           />
         )}

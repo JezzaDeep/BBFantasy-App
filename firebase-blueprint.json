@@ -1,0 +1,22 @@
+{
+  "entities": {
+    "RedeemCode": {
+      "title": "RedeemCode",
+      "description": "A code that can be redeemed for rewards.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "The unique code string." },
+        "reward": { "type": "string", "description": "The reward associated with the code." },
+        "redeemed": { "type": "boolean", "description": "Whether the code has been redeemed." },
+        "redeemedBy": { "type": "string", "description": "The UID of the user who redeemed the code." }
+      },
+      "required": ["code", "reward", "redeemed"]
+    }
+  },
+  "firestore": {
+    "/redeemCodes/{codeId}": {
+      "schema": { "$ref": "RedeemCode" },
+      "description": "Collection of redeemable codes."
+    }
+  }
+}

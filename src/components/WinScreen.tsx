@@ -72,6 +72,7 @@ interface WinScreenProps {
   device: 'mobile' | 'tablet' | 'desktop';
   audioEnabled: boolean;
   audioVolume: number;
+  victorySoundUrl: string;
   onPlayAgain: () => void;
 }
 
@@ -84,6 +85,7 @@ const WinScreen: React.FC<WinScreenProps> = ({
   device: deviceProp,
   audioEnabled,
   audioVolume,
+  victorySoundUrl,
   onPlayAgain,
 }) => {
   const { device } = useDevice();
@@ -131,10 +133,10 @@ const WinScreen: React.FC<WinScreenProps> = ({
   useEffect(() => {
     if (soundPlayed || !audioEnabled) return;
     setSoundPlayed(true);
-    const fanfare = new Audio('/sounds/milestone.mp3');
+    const fanfare = new Audio(victorySoundUrl);
     fanfare.volume = Math.min(audioVolume, 0.5);
     fanfare.play().catch(() => {});
-  }, [soundPlayed, audioEnabled, audioVolume]);
+  }, [soundPlayed, audioEnabled, audioVolume, victorySoundUrl]);
 
   // Delay content reveal for dramatic effect
   useEffect(() => {

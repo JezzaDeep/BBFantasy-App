@@ -34,6 +34,7 @@ export interface SetupPlayer {
   token: TokenName;
   language: LanguageCode;
   characterClass: CharacterClass;
+  isAI?: boolean;
 }
 
 interface SetupScreenProps {
@@ -137,6 +138,25 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
     }
   };
 
+  const addAIPlayer = () => {
+    if (playerConfigs.length < MAX_PLAYERS) {
+      const aiCount = playerConfigs.filter(p => p.isAI).length;
+      const isLyra = aiCount % 2 === 0;
+      
+      setPlayerConfigs([
+        ...playerConfigs,
+        {
+          name: isLyra ? 'Lyra' : 'Kael',
+          color: isLyra ? 'purple' : 'red',
+          token: isLyra ? 'Crystal Orb' : 'Sword',
+          language: uiLanguage,
+          characterClass: isLyra ? 'Mage' : 'Warrior',
+          isAI: true,
+        },
+      ]);
+    }
+  };
+
   const removePlayer = (index: number) => {
     if (playerConfigs.length > 1) {
       setPlayerConfigs(playerConfigs.filter((_, i) => i !== index));
@@ -219,7 +239,9 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                     value={player.name}
                     onChange={(e) => updatePlayer(index, { name: e.target.value })}
                     className="player-name-input"
+                    disabled={player.isAI}
                   />
+                  {player.isAI && <span className="text-xs font-bold text-white/50 ml-2 uppercase tracking-wider">AI</span>}
                   {playerConfigs.length > 1 && (
                     <button onClick={() => removePlayer(index)} className="remove-btn" title="Remove player" aria-label="Remove player">
                       <X size={18} />
@@ -290,10 +312,16 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
 
         <footer className="setup-actions">
           {playerConfigs.length < MAX_PLAYERS && (
-            <button className="secondary-btn" onClick={addPlayer}>
-              <Plus size={16} />
-              {tx('addPlayer')}
-            </button>
+            <div className="flex gap-4">
+              <button className="secondary-btn" onClick={addPlayer}>
+                <Plus size={16} />
+                {tx('addPlayer')}
+              </button>
+              <button className="secondary-btn" onClick={addAIPlayer}>
+                <Plus size={16} />
+                Add AI
+              </button>
+            </div>
           )}
           <button className="primary-btn enter-book" onClick={handleStart}>
             {tx('start')}

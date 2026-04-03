@@ -1,20 +1,71 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "azurasfire.publishing@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidPlayer(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 50 &&
+             (!('color' in data) || (data.color is string && data.color.size() <= 50)) &&
+             (!('class' in data) || (data.class is string && data.class.size() <= 50)) &&
+             (!('token' in data) || (data.token is string && data.token.size() <= 50)) &&
+             (!('language' in data) || (data.language is string && data.language.size() <= 20)) &&
+             (!('createdAt' in data) || (data.createdAt is number)) &&
+             (!('lastLogin' in data) || (data.lastLogin is number));
+    }
+
+    // ===============================================================
+    // Collections
+    // ===============================================================
+
     match /redeemCodes/{codeId} {
       // Allow read access to check if code exists and is not redeemed
-      allow read: if isAuthenticated();
+      allow read: if true;
       
       // Allow update only if code is not redeemed and user is setting it to redeemed
-      allow update: if isAuthenticated() && 
-                    resource.data.redeemed == false && 
-                    request.resource.data.redeemed == true &&
-                    request.resource.data.redeemedBy == request.auth.uid;
+      allow update: if (!('redeemed' in resource.data) || resource.data.redeemed == false) && 
+                    request.resource.data.redeemed == true;
+      
+      // Only admins can create or delete codes
+      allow create, delete: if isAdmin();
+    }
+
+    match /players/{playerId} {
+      // Allow anyone to read player profiles (needed for login check)
+      // Note: In a production app, we'd restrict this more, but for this game's ID-based login, it's needed.
+      allow read: if true;
+
+      // Allow creating a new player profile if the data is valid
+      allow create: if isValidPlayer(request.resource.data) && 
+                    request.resource.data.keys().hasAll(['name', 'color', 'class', 'token', 'language', 'createdAt', 'lastLogin']) &&
+                    request.resource.data.name == playerId;
+
+      // Allow updating an existing player profile (e.g., lastLogin, or settings)
+      allow update: if isValidPlayer(request.resource.data) &&
+                    request.resource.data.name == resource.data.name &&
+                    (!('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt);
+      
+      // Only admins can delete players
+      allow delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      // Allow users to read/write their own metadata if we implement full auth later
+      allow read, write: if isOwner(userId) || isAdmin();
     }
   }
 }

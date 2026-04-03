@@ -11,12 +11,35 @@
         "redeemedBy": { "type": "string", "description": "The UID of the user who redeemed the code." }
       },
       "required": ["code", "reward", "redeemed"]
+    },
+    "Player": {
+      "title": "Player",
+      "description": "A player profile in the game.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The player's unique ID/name." },
+        "color": { "type": "string", "description": "The player's chosen color." },
+        "class": { "type": "string", "description": "The player's chosen character class." },
+        "token": { "type": "string", "description": "The player's chosen token." },
+        "language": { "type": "string", "description": "The player's preferred language." },
+        "createdAt": { "type": "number", "description": "Timestamp of profile creation." },
+        "lastLogin": { "type": "number", "description": "Timestamp of last login." }
+      },
+      "required": ["name", "color", "class", "token", "language", "createdAt", "lastLogin"]
     }
   },
   "firestore": {
     "/redeemCodes/{codeId}": {
       "schema": { "$ref": "RedeemCode" },
       "description": "Collection of redeemable codes."
+    },
+    "/players/{playerId}": {
+      "schema": { "$ref": "Player" },
+      "description": "Collection of player profiles."
+    },
+    "/users/{userId}": {
+      "schema": { "type": "object", "properties": { "role": { "type": "string" } } },
+      "description": "Collection of user metadata and roles."
     }
   }
 }

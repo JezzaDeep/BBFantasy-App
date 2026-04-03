@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import {
   Sparkles,
@@ -14,6 +14,8 @@ import {
 import { LANGUAGES, LANGUAGE_LABELS, type LanguageCode } from '../i18n';
 import './SetupScreen.css';
 import { useDevice, useResponsiveFont } from '../MegaOptimization';
+import { Tutorial, TutorialStep } from './Tutorial';
+import { Fairy } from './Fairy';
 
 export type ColorName = 'brown' | 'cyan' | 'purple' | 'orange' | 'red' | 'yellow' | 'green' | 'navy';
 export type TokenName =
@@ -39,6 +41,8 @@ export interface SetupPlayer {
 
 interface SetupScreenProps {
   onStart: (players: SetupPlayer[]) => void;
+  primaryPlayerId?: string | null;
+  primaryPlayerData?: any;
   musicEnabled: boolean;
   musicVolume: number;
   sfxEnabled: boolean;
@@ -50,6 +54,39 @@ interface SetupScreenProps {
 }
 
 const MAX_PLAYERS = 8;
+
+const TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    targetId: 'setup-language-selector',
+    title: 'Choose Your Tongue',
+    content: 'Select the language of the realm. All scrolls and incantations will adapt to your choice.'
+  },
+  {
+    targetId: 'summon-reader-btn',
+    title: 'Summon Reader',
+    content: 'Bring forth another traveler to join your quest. Up to 4 souls can share this journey.'
+  },
+  {
+    targetId: 'call-spirit-btn',
+    title: 'Call Spirit',
+    content: 'Invoke an ethereal companion to challenge you. These spirits possess their own ancient wisdom.'
+  },
+  {
+    targetId: 'player-color-selector-0',
+    title: 'Soul Aura',
+    content: 'Choose the color of your aura. This will mark your presence upon the sacred board.'
+  },
+  {
+    targetId: 'player-class-selector-0',
+    title: 'Character Class',
+    content: 'Select your path. Each class brings its own unique essence to the adventure.'
+  },
+  {
+    targetId: 'begin-journey-btn',
+    title: 'Begin Your Journey',
+    content: 'Once all travelers are prepared, step through the portal and begin your epic tale.'
+  }
+];
 
 export const SETUP_COLORS: ColorName[] = ['brown', 'cyan', 'purple', 'orange', 'red', 'yellow', 'green', 'navy'];
 export const SETUP_TOKENS: TokenName[] = [
@@ -100,6 +137,8 @@ const colorClassMap: Record<ColorName, string> = {
 
 export const SetupScreen: React.FC<SetupScreenProps> = ({
   onStart,
+  primaryPlayerId,
+  primaryPlayerData,
   musicEnabled,
   musicVolume,
   sfxEnabled,
@@ -116,10 +155,39 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
   const [soundOn, setSoundOn] = useState(true);
   const [notificationsOn, setNotificationsOn] = useState(true);
   const [showFAQ, setShowFAQ] = useState(false);
-  const [playerConfigs, setPlayerConfigs] = useState<SetupPlayer[]>([
-    { name: '', color: 'brown', token: 'Sword', language: 'en', characterClass: 'Warrior' },
-    { name: '', color: 'cyan', token: 'Crystal Orb', language: 'en', characterClass: 'Mage' },
-  ]);
+  const [showTutorial, setShowTutorial] = useState(false);
+
+  useEffect(() => {
+    const tutorialCompleted = localStorage.getItem('bookbound_tutorial_completed');
+    if (!tutorialCompleted) {
+      // Small delay to ensure elements are rendered
+      const timer = setTimeout(() => setShowTutorial(true), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const completeTutorial = () => {
+    setShowTutorial(false);
+    localStorage.setItem('bookbound_tutorial_completed', 'true');
+  };
+
+  const [playerConfigs, setPlayerConfigs] = useState<SetupPlayer[]>(() => {
+    if (primaryPlayerId && primaryPlayerData) {
+      return [
+        {
+          name: primaryPlayerId,
+          color: primaryPlayerData.color || 'brown',
+          token: primaryPlayerData.token || 'Sword',
+          language: primaryPlayerData.language || 'en',
+          characterClass: primaryPlayerData.class || 'Warrior',
+        }
+      ];
+    }
+    return [
+      { name: '', color: 'brown', token: 'Sword', language: 'en', characterClass: 'Warrior' },
+      { name: '', color: 'cyan', token: 'Crystal Orb', language: 'en', characterClass: 'Mage' },
+    ];
+  });
 
   const tx = (key: string): string => LANGUAGES[uiLanguage]?.[key] || LANGUAGES.en[key] || key;
 
@@ -194,35 +262,60 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
         className="setup-altar"
         style={{ padding: device === 'mobile' ? '0.7rem' : device === 'tablet' ? '1.2rem' : '1.7rem', width: device === 'mobile' ? '100%' : 'min(1100px, 100%)' }}
       >
-        <header className="setup-header">
-          <h1 className="fantasy-font" style={{ fontFamily: 'Verdana', fontSize: '25.6px' }}>{tx('title')}</h1>
-          <p className="setup-subtitle">{tx('subtitle')}</p>
+        <header className="setup-header flex flex-col items-center">
+          <img 
+            src="https://i.postimg.cc/vHHDLbXP/banner.png" 
+            alt="Bookbound Banner" 
+            className="h-24 md:h-48 w-auto object-contain mb-4"
+            referrerPolicy="no-referrer"
+          />
+          <Fairy 
+            onClick={() => setShowTutorial(true)} 
+            className="relative z-[9999] mb-8 scale-125" 
+          />
         </header>
 
         <section className="language-selector">
           <label className="lang-label">Choose Your Tongue</label>
-          <select
-            value={uiLanguage}
-            onChange={(e) => setUiLanguage(e.target.value as LanguageCode)}
-            className="lang-select"
-            title="Choose your language"
-            aria-label="Choose your language"
-          >
-            {SETUP_LANGUAGES.map((lang) => (
-              <option key={lang} value={lang}>
-                {LANGUAGE_LABELS[lang]}
-              </option>
-            ))}
-          </select>
+          <div className="tongue-box">
+            <select
+              id="setup-language-selector"
+              value={uiLanguage}
+              onChange={(e) => setUiLanguage(e.target.value as LanguageCode)}
+              className="lang-select"
+              title="Choose your language"
+              aria-label="Choose your language"
+            >
+              {SETUP_LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {LANGUAGE_LABELS[lang]}
+                </option>
+              ))}
+            </select>
+          </div>
         </section>
 
-
+        {playerConfigs.length < MAX_PLAYERS && (
+          <div className="flex justify-center gap-4 mb-4">
+            <button id="summon-reader-btn" className="primary-btn px-8 py-3 text-lg" onClick={addPlayer}>
+              <Plus size={16} />
+              {tx('addPlayer')}
+            </button>
+            <button id="call-spirit-btn" className="primary-btn px-8 py-3 text-lg" onClick={addAIPlayer}>
+              <Plus size={16} />
+              Call Spirit
+            </button>
+          </div>
+        )}
 
         <section className="player-grid">
           {playerConfigs.map((player, index) => {
             const TokenIcon = TOKENS.find((t) => t.name === player.token)?.icon || Sword;
             return (
-              <article key={index} className={`player-card ${colorClassMap[player.color]} summon-in`}>
+              <article 
+                key={index} 
+                className={`player-card ${colorClassMap[player.color]} summon-in`}
+              >
                 <div className="card-glow" />
                 <div className="card-top">
                   <div className="token-seal pulse-soft" style={{ color: COLOR_MAP[player.color] }}>
@@ -239,7 +332,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                     value={player.name}
                     onChange={(e) => updatePlayer(index, { name: e.target.value })}
                     className="player-name-input"
-                    disabled={player.isAI}
+                    disabled={player.isAI || (index === 0 && !!primaryPlayerId)}
                   />
                   {player.isAI && <span className="text-xs font-bold text-white/50 ml-2 uppercase tracking-wider">AI</span>}
                   {playerConfigs.length > 1 && (
@@ -264,7 +357,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                 </div>
 
                 <label className="field-label">{tx('aura')}</label>
-                <div className="color-grid">
+                <div className="color-grid" id={index === 0 ? "player-color-selector-0" : undefined}>
                   {SETUP_COLORS.map((c) => (
                     <button
                       key={c}
@@ -277,57 +370,59 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                 </div>
 
                 <label className="field-label">{tx('class')}</label>
-                <select
-                  value={player.characterClass}
-                  onChange={(e) => updatePlayer(index, { characterClass: e.target.value as CharacterClass })}
-                  className="lang-select"
-                  title="Choose player class"
-                  aria-label="Choose player class"
-                >
-                  {SETUP_CLASSES.map((cls) => (
-                    <option key={cls} value={cls}>
-                      {cls}
-                    </option>
-                  ))}
-                </select>
+                <div className="character-class-box">
+                  <select
+                    id={index === 0 ? "player-class-selector-0" : undefined}
+                    value={player.characterClass}
+                    onChange={(e) => updatePlayer(index, { characterClass: e.target.value as CharacterClass })}
+                    className="lang-select"
+                    title="Choose player class"
+                    aria-label="Choose player class"
+                  >
+                    {SETUP_CLASSES.map((cls) => (
+                      <option key={cls} value={cls}>
+                        {cls}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 <label className="field-label">{tx('playerLanguage')}</label>
-                <select
-                  value={player.language}
-                  onChange={(e) => updatePlayer(index, { language: e.target.value as LanguageCode })}
-                  className="lang-select"
-                  title="Choose player language"
-                  aria-label="Choose player language"
-                >
-                  {SETUP_LANGUAGES.map((lang) => (
-                    <option key={lang} value={lang}>
-                      {LANGUAGE_LABELS[lang]}
-                    </option>
-                  ))}
-                </select>
+                <div className="tongue-box">
+                  <select
+                    value={player.language}
+                    onChange={(e) => updatePlayer(index, { language: e.target.value as LanguageCode })}
+                    className="lang-select"
+                    title="Choose player language"
+                    aria-label="Choose player language"
+                  >
+                    {SETUP_LANGUAGES.map((lang) => (
+                      <option key={lang} value={lang}>
+                        {LANGUAGE_LABELS[lang]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </article>
             );
           })}
         </section>
 
-        <footer className="setup-actions">
-          {playerConfigs.length < MAX_PLAYERS && (
-            <div className="flex gap-4">
-              <button className="secondary-btn" onClick={addPlayer}>
-                <Plus size={16} />
-                {tx('addPlayer')}
-              </button>
-              <button className="secondary-btn" onClick={addAIPlayer}>
-                <Plus size={16} />
-                Add AI
-              </button>
-            </div>
-          )}
-          <button className="primary-btn enter-book" onClick={handleStart}>
+        <div className="flex justify-center mt-4 mb-8">
+          <button id="begin-journey-btn" className="primary-btn enter-book px-8 md:px-16 py-3 md:py-4 text-lg md:text-xl" onClick={handleStart}>
             {tx('start')}
           </button>
+        </div>
+
+        <footer className="setup-actions">
         </footer>
       </main>
+      
+      <Tutorial 
+        steps={TUTORIAL_STEPS} 
+        isOpen={showTutorial} 
+        onComplete={completeTutorial} 
+      />
 
       {showFAQ && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">

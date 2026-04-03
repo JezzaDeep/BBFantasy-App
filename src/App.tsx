@@ -6,6 +6,59 @@ import * as React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth, onAuthStateChanged } from './firebase';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Lucide icons
 import {
@@ -49,6 +102,9 @@ Key as RunedKey,
 
 // Game components
 import { SetupScreen, COLOR_MAP, type SetupPlayer } from './components/SetupScreen';
+import { Fairy } from './components/Fairy';
+import { Tutorial, TutorialStep } from './components/Tutorial';
+import { LoginScreen } from './components/LoginScreen';
 import Marketplace from './components/Marketplace';
 import WinScreen from './components/WinScreen';
 import SettingsMenu from './components/SettingsMenu';
@@ -168,6 +224,7 @@ type PlayerInventory = {
   relics: Relic[];
   books: string[];
   merch: string[];
+  digitalBooks?: { title: string; url: string; }[];
 };
 
 type Player = {
@@ -630,9 +687,65 @@ function IntroScreen({ onBegin, onLoad, hasSave, playSound }: { onBegin: () => v
    APP
 ========================= */
 
+const GAME_TUTORIAL_STEPS: TutorialStep[] = [
+  {
+    targetId: 'game-header-rules',
+    title: 'Ancient Rules',
+    content: 'Consult the sacred rules at any time to understand the mechanics of the realm.'
+  },
+  {
+    targetId: 'game-header-marketplace',
+    title: 'Marketplace',
+    content: 'Trade your findings and resources with other travelers once you have rolled the dice.'
+  },
+  {
+    targetId: 'game-player-list',
+    title: 'Fellow Travelers',
+    content: 'Keep an eye on your companions. Their progress and resources are displayed here.'
+  }
+];
+
 export default function App() {
   console.log('App component rendering');
   const [hasInteracted, setHasInteracted] = useState(false);
+  const [showGameTutorial, setShowGameTutorial] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      if (user) {
+        console.log('User is signed in:', user.email);
+      } else {
+        console.log('User is signed out');
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const checkExistingPlayer = async () => {
+      const savedId = localStorage.getItem('bookbound_player_id');
+      if (savedId) {
+        try {
+          const docRef = doc(db, 'players', savedId);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+            setPrimaryPlayerId(savedId);
+            setPrimaryPlayerData(docSnap.data());
+          } else {
+            localStorage.removeItem('bookbound_player_id');
+          }
+        } catch (e) {
+          console.error("Failed to fetch player data", e);
+          if (e instanceof Error && e.message.includes('Missing or insufficient permissions')) {
+            handleFirestoreError(e, OperationType.GET, `players/${savedId}`);
+          }
+        }
+      }
+    };
+    checkExistingPlayer();
+  }, []);
 
   useEffect(() => {
     const handleInteraction = () => {
@@ -649,6 +762,9 @@ export default function App() {
   }, []);
   const [appState, setAppState] = useState<AppState>('setup');
   const [showIntro, setShowIntro] = useState(true);
+  const [showLogin, setShowLogin] = useState(false);
+  const [primaryPlayerId, setPrimaryPlayerId] = useState<string | null>(null);
+  const [primaryPlayerData, setPrimaryPlayerData] = useState<any>(null);
   const [turnPhase, setTurnPhase] = useState<TurnPhase>('ready');
   const [selectedGenre] = useState(GENRES[0]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -1114,9 +1230,27 @@ export default function App() {
     });
   };
 
-  const handleStartGame = (initialPlayers: SetupPlayer[]) => {
+  const handleStartGame = async (initialPlayers: SetupPlayer[]) => {
     if (initialPlayers.length > 0) {
       setCurrentLanguage(initialPlayers[0].language as LanguageCode);
+      
+      // Update primary player in Firebase if logged in
+      if (primaryPlayerId) {
+        try {
+          const docRef = doc(db, 'players', primaryPlayerId);
+          await setDoc(docRef, {
+            color: initialPlayers[0].color,
+            class: initialPlayers[0].characterClass,
+            token: initialPlayers[0].token,
+            language: initialPlayers[0].language,
+          }, { merge: true });
+        } catch (e) {
+          console.error("Failed to update primary player data", e);
+          if (e instanceof Error && e.message.includes('Missing or insufficient permissions')) {
+            handleFirestoreError(e, OperationType.UPDATE, `players/${primaryPlayerId}`);
+          }
+        }
+      }
     }
     setPlayers(initialPlayers.map((p, i) => ({
       id: i + 1,
@@ -1932,18 +2066,23 @@ export default function App() {
     setPlayers((prev) =>
       prev.map((p) => {
         if (p.id === currentPlayer.id) {
+          const rewardBooks = Array.isArray(reward.books) ? reward.books : [];
+          const rewardMerch = Array.isArray(reward.merch) ? reward.merch : [];
+          const rewardDigitalBooks = Array.isArray(reward.digitalBooks) ? reward.digitalBooks : [];
+          
           return {
             ...p,
             resources: {
               ...p.resources,
               ink: p.resources.ink + (reward.ink || 0),
               fate: p.resources.fate + (reward.fatePoints || 0),
-              books: p.resources.books + (reward.books ? reward.books.length : 0),
+              books: p.resources.books + rewardBooks.length,
             },
             inventory: {
               ...p.inventory,
-              books: [...p.inventory.books, ...(reward.books || [])],
-              merch: [...p.inventory.merch, ...(reward.merch || [])],
+              books: [...(p.inventory.books || []), ...rewardBooks],
+              merch: [...(p.inventory.merch || []), ...rewardMerch],
+              digitalBooks: [...(p.inventory.digitalBooks || []), ...rewardDigitalBooks],
             },
           };
         }
@@ -1965,14 +2104,28 @@ export default function App() {
         {showIntro ? (
           <IntroScreen 
             key="intro" 
-            onBegin={() => setShowIntro(false)} 
+            onBegin={() => {
+              setShowIntro(false);
+              if (!primaryPlayerId) setShowLogin(true);
+            }} 
             onLoad={loadGame}
             hasSave={!!localStorage.getItem('bookbound_save')}
             playSound={playSound} 
           />
+        ) : showLogin ? (
+          <LoginScreen
+            key="login"
+            onLoginSuccess={(data, id) => {
+              setPrimaryPlayerId(id);
+              setPrimaryPlayerData(data);
+              setShowLogin(false);
+            }}
+          />
         ) : appState === 'setup' ? (
           <SetupScreen
             key="setup"
+            primaryPlayerId={primaryPlayerId}
+            primaryPlayerData={primaryPlayerData}
             onStart={handleStartGame}
             musicEnabled={musicEnabled}
             musicVolume={musicVolume}
@@ -1998,16 +2151,21 @@ export default function App() {
                 >
                   <LogOut size={20} className="text-ink/40" />
                 </button>
-                <div>
-                  <h1 className="text-3xl font-display font-bold italic text-ink">Bookbound</h1>
-                  <p className="text-[10px] uppercase tracking-[0.3em] opacity-40 font-sans">
-                    Indie Fantasy Edition
-                  </p>
-                </div>
+                <img 
+                  src="https://i.postimg.cc/vHHDLbXP/banner.png" 
+                  alt="Bookbound Banner" 
+                  className="h-20 w-auto object-contain"
+                  referrerPolicy="no-referrer"
+                />
+                <Fairy 
+                  onClick={() => setShowGameTutorial(true)} 
+                  className="relative z-[9999] ml-4 scale-110" 
+                />
               </div>
 
               <div className="flex items-center gap-3">
                 <button
+                  id="game-header-rules"
                   onClick={() => setShowRules(true)}
                   className="p-3 glass-panel rounded-xl hover:bg-gold/10 transition-all"
                 >
@@ -2026,6 +2184,7 @@ export default function App() {
                   {zoom === 1 ? <Maximize2 size={20} /> : <Minimize2 size={20} />}
                 </button>
                 <button
+                  id="game-header-marketplace"
                   onClick={() => {
                     if (!canOpenMarketplace()) {
                       flashMarket('info', 'Marketplace opens after rolling the die.');
@@ -2048,9 +2207,9 @@ export default function App() {
               </div>
             </header>
 
-            <main className="w-full max-w-[90rem] grid grid-cols-1 lg:grid-cols-12 gap-8 items-start relative">
-              <div className="lg:col-span-4 flex flex-row flex-wrap gap-4">
-                <div className="glass-panel rounded-3xl p-6" style={{ width: '295px', height: '204px' }}>
+            <main className="w-full max-w-[95rem] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8 items-start relative p-4 md:p-8">
+              <div className="order-2 lg:order-1 lg:col-span-4 flex flex-col md:flex-row lg:flex-col gap-4 justify-center lg:justify-start" id="game-player-list">
+                <div className="glass-panel rounded-3xl p-6 w-full min-h-[200px]">
                   <h2 className="text-xs uppercase tracking-widest font-bold mb-4 opacity-40 font-sans">
                     Readers
                   </h2>
@@ -2103,7 +2262,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <div className="glass-panel rounded-3xl p-4 flex flex-col" style={{ width: '295px', height: '138px' }}>
+                <div className="glass-panel rounded-3xl p-4 flex flex-col w-full min-h-[140px]">
                   <div className="flex items-center justify-between mb-2 shrink-0">
                     <h2 className="text-xs uppercase tracking-widest font-bold opacity-40 font-sans">
                       Journal
@@ -2127,20 +2286,20 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="lg:col-span-8 flex flex-col items-center justify-start p-2 gap-4">
-                <div className="flex flex-row flex-wrap gap-4 w-full justify-center">
+              <div className="order-1 lg:order-2 lg:col-span-8 flex flex-col items-center justify-start p-2 md:p-4 gap-4 md:gap-8 min-h-screen">
+                <div className="controls-panel">
                   <button 
                     onClick={() => setShowResources(true)}
-                    className="glass-panel px-6 py-3 rounded-2xl font-display italic text-lg hover:bg-gold/10 transition-all flex items-center gap-2"
+                    className="glass-panel px-4 py-2 md:px-6 md:py-3 rounded-2xl font-display italic text-sm md:text-lg hover:bg-gold/10 transition-all flex items-center gap-2"
                   >
-                    <Scroll size={20} className="text-gold" />
+                    <Scroll size={16} className="md:w-5 md:h-5 text-gold" />
                     Resources
                   </button>
                   <button 
                     onClick={() => setShowArchive(true)}
-                    className="glass-panel px-6 py-3 rounded-2xl font-display italic text-lg hover:bg-gold/10 transition-all flex items-center gap-2"
+                    className="glass-panel px-4 py-2 md:px-6 md:py-3 rounded-2xl font-display italic text-sm md:text-lg hover:bg-gold/10 transition-all flex items-center gap-2"
                   >
-                    <Key size={20} className="text-gold" />
+                    <Key size={16} className="md:w-5 md:h-5 text-gold" />
                     Archive & Relics
                   </button>
 
@@ -2150,20 +2309,20 @@ export default function App() {
                       whileTap={{ scale: 0.95 }}
                       onClick={handleRoll}
                       disabled={isPaused || !isMyTurn || isSkipped}
-                      className={`px-8 py-3 rounded-2xl font-display italic text-lg transition-all shadow-lg flex items-center gap-2 ${
+                      className={`px-6 py-2 md:px-8 md:py-3 rounded-2xl font-display italic text-sm md:text-lg transition-all shadow-lg flex items-center gap-2 ${
                         isPaused || !isMyTurn || isSkipped
                           ? 'bg-white/5 text-white/20 cursor-not-allowed'
                           : 'bg-gold text-ink hover:bg-white'
                       }`}
                     >
-                      <Dices size={20} />
+                      <Dices size={16} className="md:w-5 md:h-5" />
                       Roll the Dice of Fate
                     </motion.button>
                   ) : (
                     <button
                       onClick={() => handleNextTurn()}
                       disabled={turnPhase !== 'turn_complete' || isPaused || !isMyTurn}
-                      className={`px-8 py-3 rounded-2xl font-display italic text-lg transition-all shadow-lg flex items-center gap-2 ${
+                      className={`px-6 py-2 md:px-8 md:py-3 rounded-2xl font-display italic text-sm md:text-lg transition-all shadow-lg flex items-center gap-2 ${
                         turnPhase !== 'turn_complete' || isPaused || !isMyTurn
                           ? 'bg-white/5 text-white/20 cursor-not-allowed'
                           : 'bg-white text-ink hover:bg-gold hover:scale-105'
@@ -2173,7 +2332,7 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                <div className="w-full max-w-[min(100%,100vh)] aspect-square bg-ink/5 border border-ink/10 board-container relative overflow-hidden">
+                <div className="w-full max-w-[min(100%,85vh)] aspect-square bg-ink/5 border border-ink/10 board-container relative z-10">
                   <AnimatePresence>
                     {(isRolling || (lastRoll !== null && turnPhase !== 'ready')) && (
                       <motion.div
@@ -2257,7 +2416,7 @@ export default function App() {
 
                           {space.type === 'quest' && (
                             <div className="flex flex-col items-center">
-                              <Scroll size={6} className="md:w-[10px] md:h-[10px] mb-0.5 text-gold" />
+                              <Scroll size={4} className="md:w-[10px] md:h-[10px] mb-0.25 text-gold" />
                               <span className="space-name">
                                 {SPACE_TX[currentLanguage]?.[space.id]?.name || space.name}
                               </span>
@@ -2266,7 +2425,7 @@ export default function App() {
 
                           {space.type === 'hazard' && (
                             <div className="flex flex-col items-center">
-                              <Flame size={6} className="md:w-[10px] md:h-[10px] mb-0.5 text-red-700" />
+                              <Flame size={4} className="md:w-[10px] md:h-[10px] mb-0.25 text-red-700" />
                               <span className="space-name">
                                 {SPACE_TX[currentLanguage]?.[space.id]?.name || space.name}
                               </span>
@@ -2275,7 +2434,7 @@ export default function App() {
 
                           {space.type === 'safe' && (
                             <div className="flex flex-col items-center">
-                              <Shield size={6} className="md:w-[10px] md:h-[10px] mb-0.5 text-green-700" />
+                              <Shield size={4} className="md:w-[10px] md:h-[10px] mb-0.25 text-green-700" />
                               <span className="space-name">
                                 {SPACE_TX[currentLanguage]?.[space.id]?.name || space.name}
                               </span>
@@ -2284,7 +2443,7 @@ export default function App() {
 
                           {space.type === 'portal' && (
                             <div className="flex flex-col items-center">
-                              <Zap size={6} className="md:w-[10px] md:h-[10px] mb-0.5 text-cyan-700" />
+                              <Zap size={4} className="md:w-[10px] md:h-[10px] mb-0.25 text-cyan-700" />
                               <span className="space-name">
                                 {SPACE_TX[currentLanguage]?.[space.id]?.name || space.name}
                               </span>
@@ -2300,7 +2459,7 @@ export default function App() {
                                 <img 
                                   src={space.image} 
                                   alt="" 
-                                  className="w-full h-6 object-contain rounded-sm mb-0.5 opacity-80 shadow-sm"
+                                  className="w-full h-3 md:h-6 object-contain rounded-sm mb-0.25 opacity-80 shadow-sm"
                                   referrerPolicy="no-referrer"
                                 />
                               )}
@@ -2339,7 +2498,7 @@ export default function App() {
                                   </div>
 
                                   <div 
-                                    className={`w-6 h-6 md:w-9 md:h-9 rounded-full flex items-center justify-center text-white transform -translate-y-2 relative border-[2px] md:border-[3px] shadow-lg transition-transform duration-300 ${isActive ? 'scale-125 z-50' : 'scale-100 z-10'}`}
+                                    className={`token rounded-full flex items-center justify-center text-white transform -translate-y-2 relative border-[2px] md:border-[3px] shadow-lg transition-transform duration-300 ${isActive ? 'scale-125 z-50' : 'scale-100 z-10'}`}
                                     style={{
                                       borderColor: p.characterClass === 'noble' ? '#fbbf24' : 
                                                    p.characterClass === 'mage' ? '#c084fc' : 
@@ -2396,6 +2555,11 @@ export default function App() {
                 </div>
               </div>
             </main>
+            <Tutorial 
+              steps={GAME_TUTORIAL_STEPS} 
+              isOpen={showGameTutorial} 
+              onComplete={() => setShowGameTutorial(false)} 
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -2406,12 +2570,12 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[200] flex items-center justify-center p-4"
+            className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[1100] flex items-center justify-center p-4"
           >
-            <div className="bg-paper text-ink rounded-[2rem] p-8 max-w-md w-full shadow-2xl relative">
+            <div className="bg-paper text-ink rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl relative">
               <button
                 onClick={() => setShowResources(false)}
-                className="absolute top-6 right-6 p-2 hover:bg-ink/5 rounded-full transition-colors"
+                className="absolute top-4 right-4 md:top-6 md:right-6 p-2 bg-ink/5 hover:bg-ink/10 rounded-full transition-colors z-10"
               >
                 <X size={24} />
               </button>
@@ -2461,12 +2625,12 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[200] flex items-center justify-center p-4"
+            className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[1100] flex items-center justify-center p-4"
           >
-            <div className="bg-paper text-ink rounded-[2rem] p-8 max-w-md w-full shadow-2xl relative">
+            <div className="bg-paper text-ink rounded-[2rem] p-6 md:p-8 max-w-md w-full shadow-2xl relative">
               <button
                 onClick={() => setShowArchive(false)}
-                className="absolute top-6 right-6 p-2 hover:bg-ink/5 rounded-full transition-colors"
+                className="absolute top-4 right-4 md:top-6 md:right-6 p-2 bg-ink/5 hover:bg-ink/10 rounded-full transition-colors z-10"
               >
                 <X size={24} />
               </button>
@@ -2477,6 +2641,22 @@ export default function App() {
                 <p className="flex justify-between border-b border-ink/10 pb-2"><span>Active Quests:</span> <span className="font-bold">{currentPlayer?.inventory.questCards?.length || 0}</span></p>
                 <p className="flex justify-between text-gold font-bold"><span>Relics:</span> <span>{currentPlayer?.inventory.relics?.length || 0}</span></p>
               </div>
+
+              {/* Digital Library */}
+              {(currentPlayer?.inventory.digitalBooks?.length || 0) > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm uppercase tracking-widest opacity-50 mb-3 text-center">Digital Library</h3>
+                  <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar pr-1">
+                    {currentPlayer?.inventory.digitalBooks?.map((book, idx) => (
+                      <a key={idx} href={book.url} target="_blank" rel="noopener noreferrer" className="block p-3 bg-ink/5 border border-ink/10 rounded-xl hover:bg-gold/20 hover:border-gold/50 transition-all text-sm flex justify-between items-center group">
+                        <span className="font-medium text-ink/80 group-hover:text-ink">{book.title}</span>
+                        <span className="text-[10px] uppercase tracking-wider font-bold bg-gold text-ink px-2 py-1 rounded-md shadow-sm">Open</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {currentPlayer?.inventory.relics?.length ? (
                 <div className="mt-4">
                   <h3 className="text-sm uppercase tracking-widest opacity-50 mb-3 text-center">Relics & Trophies</h3>
@@ -2557,7 +2737,7 @@ export default function App() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[500] flex items-center justify-center p-4"
+                  className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[1000] flex items-center justify-center p-4"
                 >
             <motion.div
               initial={{ scale: 0.9, y: 20 }}
@@ -2700,7 +2880,7 @@ export default function App() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-ink/90 backdrop-blur-xl z-[500] flex items-center justify-center p-4"
+                  className="fixed inset-0 bg-ink/90 backdrop-blur-xl z-[1000] flex items-center justify-center p-4"
                 >
             <div className="max-w-4xl w-full text-center">
               <h2 className="text-5xl font-display italic text-white mb-2">Seer's Insight</h2>
@@ -2749,7 +2929,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-ink/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 bg-ink/80 backdrop-blur-md z-[1000] flex items-center justify-center p-4"
           >
             <motion.div
               initial={{ scale: 0.9, y: 20 }}
@@ -2874,7 +3054,7 @@ export default function App() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-ink/90 backdrop-blur-xl z-[500] flex items-center justify-center p-4"
+                  className="fixed inset-0 bg-ink/90 backdrop-blur-xl z-[600] flex items-center justify-center p-4"
                 >
             <div className="max-w-2xl w-full glass-panel rounded-[3rem] p-10 shadow-2xl text-center">
               <h2 className="text-3xl font-display italic text-ink mb-2">Trade Proposal</h2>
@@ -2981,6 +3161,19 @@ export default function App() {
             onToggleNotifications={() => setNotificationsEnabled(!notificationsEnabled)}
             onSave={saveGame}
             onRedeemReward={handleRedeemReward}
+            onSignOut={async () => {
+              try {
+                await auth.signOut();
+                localStorage.removeItem('bookbound_player_id');
+                setPrimaryPlayerId(null);
+                setPrimaryPlayerData(null);
+                setAppState('setup');
+                setShowLogin(true);
+                addLog('Signed out successfully.');
+              } catch (e) {
+                console.error('Sign out error:', e);
+              }
+            }}
             player={currentPlayer ? { 
               ink: currentPlayer.resources.ink, 
               fatePoints: currentPlayer.resources.fate, 

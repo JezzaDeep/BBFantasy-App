@@ -1,11 +1,63 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
-  Volume2, VolumeX, Gift, HelpCircle, Mail, X, Bell, Save, Facebook, Instagram
+  Volume2, VolumeX, Gift, HelpCircle, Mail, X, Bell, Save, Facebook, Instagram, LogOut
 } from "lucide-react";
 import { LANGUAGES, type LanguageCode } from "../i18n";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "../firebase";
+import { LegalDocLayout, FAQContent, TermsContent, PrivacyContent, RedeemGuideContent } from "./LegalDocs";
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Props for settings menu
 interface SettingsMenuProps {
@@ -24,6 +76,7 @@ interface SettingsMenuProps {
   onSave: () => void;
   player: any; // for displaying balances
   onRedeemReward: (reward: any) => void; // function to handle rewards
+  onSignOut?: () => void;
 }
 
 const SettingsMenu: React.FC<SettingsMenuProps> = ({
@@ -42,6 +95,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
   onSave,
   player,
   onRedeemReward,
+  onSignOut,
 }) => {
   const tx = (key: string) => LANGUAGES[currentLanguage]?.[key] || LANGUAGES['en'][key] || key;
 
@@ -52,11 +106,11 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
   const [rewardReceived, setRewardReceived] = useState<any>(null);
   const [isRedeeming, setIsRedeeming] = useState(false);
 
+  // Legal docs state
+  const [activeDoc, setActiveDoc] = useState<'faq' | 'terms' | 'privacy' | 'redeem' | null>(null);
+
   const handleRedeemSubmit = async () => {
-    if (!auth.currentUser) {
-      setRedeemMessage('❌ Please sign in to redeem codes.');
-      return;
-    }
+    if (!redeemCode.trim()) return;
 
     setIsRedeeming(true);
     setRedeemMessage('Checking code...');
@@ -73,10 +127,17 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
           // Redeem the code
           await updateDoc(codeRef, {
             redeemed: true,
-            redeemedBy: auth.currentUser.uid
+            redeemedBy: auth.currentUser?.uid || 'anonymous'
           });
 
-          const reward = JSON.parse(codeData.reward);
+          let reward;
+          try {
+            reward = typeof codeData.reward === 'string' ? JSON.parse(codeData.reward) : codeData.reward;
+          } catch (e) {
+            console.error("Failed to parse reward:", e);
+            reward = codeData.reward; // fallback
+          }
+          
           setRewardReceived(reward);
           setShowRewardAnimation(true);
           onRedeemReward(reward);
@@ -85,9 +146,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
       } else {
         setRedeemMessage('❌ The code is invalid or has vanished!');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error redeeming code:', error);
-      setRedeemMessage('❌ An error occurred. Please try again.');
+      setRedeemMessage(`❌ Error: ${error?.message || 'An error occurred. Please try again.'}`);
+      if (error instanceof Error && error.message.includes('Missing or insufficient permissions')) {
+        handleFirestoreError(error, OperationType.UPDATE, `redeemCodes/${redeemCode.trim()}`);
+      }
     } finally {
       setIsRedeeming(false);
       setRedeemCode('');
@@ -129,10 +193,10 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
             {player && (
               <div className="space-y-2">
                 <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex justify-between font-bold">
-                  <span>🖋 Ink Points</span> <span>{player.resources?.ink || 0}</span>
+                  <span>🖋 Ink Points</span> <span>{player.ink || 0}</span>
                 </div>
                 <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex justify-between font-bold">
-                  <span>🔮 Fate Points</span> <span>{player.resources?.fate || 0}</span>
+                  <span>🔮 Fate Points</span> <span>{player.fatePoints || 0}</span>
                 </div>
                 <div className="p-3 bg-white/5 rounded-xl border border-white/10 flex justify-between font-bold">
                   <span>📚 Books in Tome</span> <span>{player.inventory?.books?.length || 0}</span>
@@ -210,9 +274,18 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
 
             {/* Redeem Code (Fantasy) */}
             <div className="glass-panel rounded-xl p-4 space-y-2 relative">
-              <div className="flex items-center gap-2">
-                <Gift size={20} className="text-gold" />
-                <h3 className="font-bold text-ink/80">✨ Redeem Magical Code</h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Gift size={20} className="text-gold" />
+                  <h3 className="font-bold text-ink/80">✨ Redeem Magical Code</h3>
+                </div>
+                <button 
+                  onClick={() => setActiveDoc('redeem')}
+                  className="p-1 text-ink/40 hover:text-gold transition-colors rounded-full hover:bg-ink/5"
+                  title="How to redeem codes"
+                >
+                  <HelpCircle size={16} />
+                </button>
               </div>
               <div className="flex gap-2">
                 <input
@@ -236,32 +309,54 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
                 {showRewardAnimation && rewardReceived && (
                   <motion.div
                     initial={{ scale: 0, opacity: 0 }}
-                    animate={{ scale: 1.1, opacity: 1 }}
+                    animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0, opacity: 0 }}
-                    className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center pointer-events-none z-50"
-                    onAnimationComplete={() => setTimeout(() => setShowRewardAnimation(false), 2000)}
+                    className="fixed inset-0 flex flex-col items-center justify-center z-[10000] bg-black/60 backdrop-blur-sm p-4"
                   >
                     <motion.div
-                      className="p-6 bg-gradient-to-br from-purple-800/80 via-pink-700/70 to-yellow-500/60 rounded-3xl shadow-xl text-center text-white font-bold text-lg backdrop-blur-md"
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1, rotate: [0, 5, -5, 0] }}
-                      transition={{ duration: 0.6 }}
+                      className="p-8 bg-gradient-to-br from-purple-800 via-pink-700 to-yellow-600 rounded-3xl shadow-2xl text-center text-white font-bold text-lg max-w-sm w-full border-4 border-gold/50 relative overflow-hidden"
+                      initial={{ scale: 0.8, y: 50 }}
+                      animate={{ scale: 1, y: 0 }}
+                      transition={{ type: "spring", bounce: 0.5 }}
                     >
-                      {rewardReceived.ink && `🖋 Ink +${rewardReceived.ink}`}
-                      {rewardReceived.fatePoints && `🔮 Fate +${rewardReceived.fatePoints}`}
-                      {rewardReceived.books && `📚 Book: ${rewardReceived.books.join(', ')}`}
-                      {rewardReceived.merch && `🎁 Merch: ${rewardReceived.merch.join(', ')}`}
+                      <h2 className="text-3xl font-display italic text-gold mb-4 drop-shadow-md">Reward Claimed!</h2>
+                      
+                      <div className="space-y-3 mb-6 text-left bg-black/20 p-4 rounded-xl">
+                        {rewardReceived.ink && <p>🖋 Ink: <span className="text-gold">+{rewardReceived.ink}</span></p>}
+                        {rewardReceived.fatePoints && <p>🔮 Fate: <span className="text-gold">+{rewardReceived.fatePoints}</span></p>}
+                        {rewardReceived.books && rewardReceived.books.length > 0 && <p>📚 Books: <span className="text-gold">{rewardReceived.books.join(', ')}</span></p>}
+                        {rewardReceived.merch && rewardReceived.merch.length > 0 && <p>🎁 Merch: <span className="text-gold">{rewardReceived.merch.join(', ')}</span></p>}
+                        
+                        {rewardReceived.digitalBooks && rewardReceived.digitalBooks.length > 0 && (
+                          <div className="mt-4 pt-4 border-t border-white/20">
+                            <p className="mb-2 text-gold">📖 Digital Deliveries:</p>
+                            {rewardReceived.digitalBooks.map((b: any, i: number) => (
+                              <a key={i} href={b.url} target="_blank" rel="noopener noreferrer" className="block w-full py-2 px-4 bg-white text-ink rounded-lg text-sm hover:bg-gold transition-colors mb-2 text-center">
+                                Open: {b.title}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <button 
+                        onClick={() => setShowRewardAnimation(false)}
+                        className="w-full py-3 bg-gold text-ink rounded-xl font-bold uppercase tracking-widest hover:bg-white transition-colors shadow-lg"
+                      >
+                        Awesome!
+                      </button>
                     </motion.div>
+                    
                     {/* Floating sparkles */}
                     {[...Array(8)].map((_, i) => (
                       <motion.div
                         key={i}
-                        className="w-2 h-2 bg-gold/80 rounded-full absolute"
+                        className="w-2 h-2 bg-gold/80 rounded-full absolute pointer-events-none"
                         style={{
                           top: `${Math.random() * 100}%`,
                           left: `${Math.random() * 100}%`,
                         }}
-                        animate={{ y: [-10, 10], x: [-5, 5] }}
+                        animate={{ y: [-20, 20], x: [-10, 10] }}
                         transition={{ repeat: Infinity, duration: 1 + Math.random() }}
                       />
                     ))}
@@ -280,26 +375,59 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({
               <div className="text-[10px] uppercase tracking-wider text-gold/60 font-bold bg-gold/5 px-2 py-1 rounded">Local Save</div>
             </button>
 
+            {/* Switch Player */}
+            {onSignOut && (
+              <button 
+                onClick={() => { onSignOut(); onClose(); }}
+                className="w-full flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-red-500/10 transition-colors text-red-600 font-bold border-2 border-red-500/20"
+              >
+                <LogOut size={18} />
+                <span className="flex-1 text-left">Switch Player Profile</span>
+              </button>
+            )}
+
             {/* Support / Contact / Social */}
-            <a href="https://drive.google.com/file/d/15CVbcNPh1ue-yVo-CyfCWDde2mGYZ-Oq/view?usp=sharing" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
-              <HelpCircle size={18} className="text-gold" /> {tx('settings_support')}
-            </a>
-            <a href="mailto:moonspinepress@gmail.com" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
-              <Mail size={18} className="text-gold" /> {tx('settings_contact')}
-            </a>
-            <a href="https://www.facebook.com/authorjezzadeep" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
-              <Facebook size={18} className="text-gold" /> Facebook
-            </a>
-            <a href="https://www.instagram.com/jezzadeep.author" target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 glass-panel rounded-xl px-4 py-3 hover:bg-gold/5 text-ink/80 font-medium">
-              <Instagram size={18} className="text-gold" /> Instagram
-            </a>
+            <div className="flex gap-3">
+              <button onClick={() => setActiveDoc('faq')} className="flex-1 flex justify-center items-center glass-panel rounded-xl py-3 hover:bg-gold/10 transition-colors" title="Support & FAQ">
+                <HelpCircle size={24} className="text-gold" />
+              </button>
+              <a href="mailto:moonspinepress@gmail.com" className="flex-1 flex justify-center items-center glass-panel rounded-xl py-3 hover:bg-gold/10 transition-colors" title="Contact">
+                <Mail size={24} className="text-gold" />
+              </a>
+              <a href="https://www.facebook.com/authorjezzadeep" target="_blank" rel="noopener noreferrer" className="flex-1 flex justify-center items-center glass-panel rounded-xl py-3 hover:bg-gold/10 transition-colors" title="Facebook">
+                <Facebook size={24} className="text-gold" />
+              </a>
+              <a href="https://www.instagram.com/jezzadeep.author" target="_blank" rel="noopener noreferrer" className="flex-1 flex justify-center items-center glass-panel rounded-xl py-3 hover:bg-gold/10 transition-colors" title="Instagram">
+                <Instagram size={24} className="text-gold" />
+              </a>
+            </div>
           </div>
 
           {/* Footer */}
           <div className="pt-4 border-t border-ink/10 text-xs text-center space-x-6 text-ink/60 font-medium relative z-10 pb-2">
-            <a href="https://drive.google.com/file/d/19FiT-x7zAuhdNvyvi5IGfPN4Ewxe9fSr/view?usp=sharing" target="_blank" rel="noopener noreferrer" className="hover:text-gold transition-colors">Terms of Use</a>
-            <a href="https://drive.google.com/file/d/1Ep9M7p02lsBc9Wwn82ZjBOji7A5X4DJM/view?usp=sharing" target="_blank" rel="noopener noreferrer" className="hover:text-gold transition-colors">Privacy Policy</a>
+            <button onClick={() => setActiveDoc('terms')} className="hover:text-gold transition-colors">Terms of Use</button>
+            <button onClick={() => setActiveDoc('privacy')} className="hover:text-gold transition-colors">Privacy Policy</button>
           </div>
+
+          {/* Legal Docs Overlay */}
+          <AnimatePresence>
+            {activeDoc && (
+              <LegalDocLayout 
+                title={
+                  activeDoc === 'faq' ? 'Support & FAQ' : 
+                  activeDoc === 'terms' ? 'Terms of Use' : 
+                  activeDoc === 'redeem' ? 'Redeeming Codes' :
+                  'Privacy Policy'
+                } 
+                onBack={() => setActiveDoc(null)}
+              >
+                {activeDoc === 'faq' && <FAQContent />}
+                {activeDoc === 'terms' && <TermsContent />}
+                {activeDoc === 'privacy' && <PrivacyContent />}
+                {activeDoc === 'redeem' && <RedeemGuideContent />}
+              </LegalDocLayout>
+            )}
+          </AnimatePresence>
         </motion.div>
       </motion.div>
     </AnimatePresence>
